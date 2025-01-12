@@ -1,106 +1,109 @@
-public interface IFileProcessor
+using ClosedXML.Excel;
+using System.Data;
+using System.Diagnostics;
+using System.Globalization;
+
+Stopwatch stopwatch = new Stopwatch();
+stopwatch.Start();
+
+string directoryPath = @"C:\Users\Tatiana\source\repos\MergeFiles\in";
+string exportPath = @"C:\Users\Tatiana\source\repos\MergeFiles\out";
+int maxRowsPerFile = 200000;
+int sortByCol = 2;
+
+DataTable combinedDataTable = new DataTable();
+string[] files = Directory.GetFiles(directoryPath, "*.xlsx");
+
+// Обработка файлов асинхронно
+var tasks = files.Select(file => Task.Run(() => ProcessFile(file))).ToArray();
+var results = await Task.WhenAll(tasks);
+
+// Объединение всех DataTable в один
+foreach (var result in results)
 {
-    string ProcessFiles(string[] filePaths);
+    combinedDataTable.Merge(result);
 }
 
+// Сортировка данных по первому столбцу (можно изменить на нужный вам)
+var sortedDt = combinedDataTable.AsEnumerable()
+                                   .OrderByDescending(row => DateTime.ParseExact(row.Field<string>(sortByCol - 1), "dd.MM.yyyy HH:mm:ss", CultureInfo.InvariantCulture))
+                                   .CopyToDataTable();
 
+// Разбиение на файлы по 200000 строк
+await SplitAndSaveFiles(sortedDt, exportPath, maxRowsPerFile);
 
-public class CsvFileProcessor : IFileProcessor
+Console.WriteLine("Объединение и разбиение завершено.");
+
+static DataTable ProcessFile(string filePath)
 {
-    public string ProcessFiles(string[] filePaths)
+    var localDataTable = new DataTable();
+
+    using (var workbook = new XLWorkbook(filePath))
     {
-        var sb = new StringBuilder();
-        
-        foreach (var filePath in filePaths)
+        var worksheet = workbook.Worksheet(1); // Читаем первый лист
+
+        // Создаем структуру DataTable
+        foreach (var header in worksheet.FirstRow().Cells())
         {
-            var lines = File.ReadAllLines(filePath);
-            sb.AppendLine(string.Join(",", lines));
+            localDataTable.Columns.Add(header.GetString());
         }
-        
-        return sb.ToString();
+
+        // Добавляем строки данных
+        foreach (var row in worksheet.RowsUsed().Skip(1)) // Пропускаем заголовок
+        {
+            var dataRow = localDataTable.NewRow();
+            for (int i = 0; i < localDataTable.Columns.Count; i++)
+            {
+                dataRow[i] = row.Cell(i + 1).GetString(); // Индексы начинаются с 1
+                var t = row.Cell(i + 1).GetFormattedString();
+            }
+
+            localDataTable.Rows.Add(dataRow);
+        }
+    }
+
+    return localDataTable;
+}
+
+static async Task SplitAndSaveFiles(DataTable sortedRows, string outputFolderPath, int maxRowsPerFile)
+{
+    int fileCount = 0;
+
+    for (int i = 0; i < sortedRows.Rows.Count; i += maxRowsPerFile)
+    {
+        var currentBatch = sortedRows.AsEnumerable().Skip(i).Take(maxRowsPerFile).CopyToDataTable();
+
+        string outputFilePath = Path.Combine(outputFolderPath, $"output_{fileCount++}.xlsx");
+        await Task.Run(() => SaveToExcel(currentBatch, outputFilePath));
     }
 }
 
-public class XlsxFileProcessor : IFileProcessor
+static void SaveToExcel(DataTable dataTable, string outputFilePath)
 {
-    public string ProcessFiles(string[] filePaths)
+    using (var workbook = new XLWorkbook())
     {
-        var sb = new StringBuilder();
-        
-        foreach (var filePath in filePaths)
+        var worksheet = workbook.Worksheets.Add("Sheet1");
+
+        // Записываем заголовки
+        for (int col = 0; col < dataTable.Columns.Count; col++)
         {
-            using (var package = new ExcelPackage(new FileInfo(filePath)))
+            worksheet.Cell(1, col + 1).Value = dataTable.Columns[col].ColumnName;
+        }
+
+        // Записываем данные
+        for (int row = 0; row < dataTable.Rows.Count; row++)
+        {
+            for (int col = 0; col < dataTable.Columns.Count; col++)
             {
-                var worksheet = package.Workbook.Worksheets[0];
-                for (int row = 1; row <= worksheet.Dimension.End.Row; row++)
-                {
-                    for (int col = 1; col <= worksheet.Dimension.End.Column; col++)
-                    {
-                        sb.Append(worksheet.Cells[row, col].Text);
-                        if (col < worksheet.Dimension.End.Column) sb.Append(",");
-                    }
-                    sb.AppendLine();
-                }
+                worksheet.Cell(row + 2, col + 1).Value = dataTable.Rows[row][col].ToString();
             }
         }
-        
-        return sb.ToString();
+        workbook.SaveAs(outputFilePath);
     }
 }
 
 
+stopwatch.Stop();
+Console.WriteLine(stopwatch.ElapsedMilliseconds/1000);
 
-public class FileMerger
-{
-    private readonly IFileProcessor _fileProcessor;
-
-    public FileMerger(IFileProcessor fileProcessor)
-    {
-        _fileProcessor = fileProcessor;
-    }
-
-    public void MergeFiles(string[] filePaths, string outputPath)
-    {
-        var mergedContent = _fileProcessor.ProcessFiles(filePaths);
-        File.WriteAllText(outputPath, mergedContent);
-    }
-}
-
-
-
-
-
-
-class Program
-{
-    static void Main(string[] args)
-    {
-        Console.WriteLine("Введите путь к директории:");
-        string directoryPath = Console.ReadLine();
-
-        Console.WriteLine("Введите расширение файлов (.xlsx или .csv):");
-        string extension = Console.ReadLine();
-
-        if (extension != ".xlsx" && extension != ".csv")
-        {
-            Console.WriteLine("Неверное расширение.");
-            return;
-        }
-
-        var filePaths = Directory.GetFiles(directoryPath, $"*{extension}");
-
-        if (!filePaths.Any())
-        {
-            Console.WriteLine("Нет файлов для объединения.");
-            return;
-        }
-
-        IFileProcessor fileProcessor = extension == ".xlsx" ? (IFileProcessor)new XlsxFileProcessor() : new CsvFileProcessor();
-        var fileMerger = new FileMerger(fileProcessor);
-
-        string outputPath = Path.Combine(directoryPath, $"merged{extension}");
-        fileMerger.MergeFiles(filePaths, outputPath);
-
-        Console.WriteLine($"Файлы объединены в: {outputPath}");
-    }
-}
+Console.ReadLine();
