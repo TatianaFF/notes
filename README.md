@@ -1,113 +1,58 @@
-@typeparam TItem
+using System;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Threading.Tasks;
 
-<div>
-    <table class="table">
-        <thead>
-            @ChildContentHeader
-        </thead>
-        <tbody>
-            @foreach (var item in PaginatedData)
-            {
-                @ChildContentRow(item)
-            }
-        </tbody>
-    </table>
+class Program
+{
+    static async Task Main(string[] args)
+    {
+        // URL вашего экземпляра Elasticsearch и индекс, к которому вы хотите обратиться
+        string elasticsearchUrl = "http://localhost:9200"; // Замените на ваш URL
+        string indexName = "your_index_name"; // Замените на имя вашего индекса
+        string apiKey = "your_api_key"; // Замените на ваш API-ключ
 
-    <div class="pagination-controls">
-        <!-- Page Size Dropdown -->
-        <label for="pageSize">Page Size: </label>
-        <select @bind="PageSize" id="pageSize">
-            @foreach (var size in PageSizes)
-            {
-                <option value="@size">@size</option>
-            }
-        </select>
-
-        <!-- Previous Page Button -->
-        <button @onclick="PreviousPage" disabled="@IsPreviousDisabled">Previous</button>
-
-        <!-- Page Number Buttons -->
-        @if (TotalPages > 0)
+        using (HttpClient client = new HttpClient())
         {
-            int startPage = Math.Max(1, CurrentPage - 2);
-            int endPage = Math.Min(TotalPages, startPage + 4);
+            // Устанавливаем заголовок для формата JSON
+            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-            if (endPage - startPage < 4 && startPage > 1)
+            // Добавляем API-ключ в заголовок Authorization
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("ApiKey", apiKey);
+
+            try
             {
-                startPage = Math.Max(1, endPage - 4);
+                // Формируем URL для запроса (например, получение всех документов из индекса)
+                string url = $"{elasticsearchUrl}/{indexName}/_search";
+
+                // Отправляем GET-запрос
+                HttpResponseMessage response = await client.GetAsync(url);
+
+                // Проверяем успешность ответа
+                response.EnsureSuccessStatusCode();
+
+                // Читаем ответ в виде строки
+                string responseBody = await response.Content.ReadAsStringAsync();
+
+                // Выводим результат
+                Console.WriteLine(responseBody);
             }
-
-            if (startPage > 1)
+            catch (HttpRequestException e)
             {
-                <button @onclick="() => GoToPage(1)">1</button>
-                @if (startPage > 2)
-                {
-                    <span>...</span>
-                }
-            }
-
-            for (int pageNumber = startPage; pageNumber <= endPage; pageNumber++)
-            {
-                <button @onclick="() => GoToPage(pageNumber)" class="@(CurrentPage == pageNumber ? "active" : "")">
-                    @pageNumber
-                </button>
-            }
-
-            if (endPage < TotalPages)
-            {
-                if (endPage < TotalPages - 1)
-                {
-                    <span>...</span>
-                }
-                <button @onclick="() => GoToPage(TotalPages)">@TotalPages</button>
+                Console.WriteLine($"Ошибка запроса: {e.Message}");
             }
         }
-
-        <!-- Next Page Button -->
-        <button @onclick="NextPage" disabled="@IsNextDisabled">Next</button>
-    </div>
-</div>
-
-@code {
-    [Parameter] public IEnumerable<TItem> Items { get; set; }
-    [Parameter] public int DefaultPageSize { get; set; } = 10;
-    [Parameter] public RenderFragment ChildContentHeader { get; set; }
-    [Parameter] public RenderFragment<TItem> ChildContentRow { get; set; }
-
-    private int PageSize { get; set; }
-    private List<TItem> PaginatedData => Items.Skip((CurrentPage - 1) * PageSize).Take(PageSize).ToList();
-    private int CurrentPage { get; set; } = 1;
-
-    private readonly int[] PageSizes = new[] { 5, 10, 20, 50 };
-
-    protected override void OnInitialized()
-    {
-        PageSize = DefaultPageSize;
     }
-
-    private void NextPage()
-    {
-        if (CurrentPage < TotalPages)
-        {
-            CurrentPage++;
-        }
-    }
-
-    private void PreviousPage()
-    {
-        if (CurrentPage > 1)
-        {
-            CurrentPage--;
-        }
-    }
-
-    private void GoToPage(int pageNumber)
-    {
-        CurrentPage = pageNumber;
-    }
-
-    private int TotalPages => (int)Math.Ceiling(Items.Count() / (double)PageSize);
-
-    private bool IsPreviousDisabled => CurrentPage == 1;
-    private bool IsNextDisabled => CurrentPage == TotalPages;
 }
+
+
+
+
+string searchJson = @"{
+    ""query"": {
+        ""match_all"": {}
+    }
+}";
+
+StringContent content = new StringContent(searchJson, System.Text.Encoding.UTF8, "application/json");
+HttpResponseMessage response = await client.PostAsync(url, content);
