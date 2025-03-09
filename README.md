@@ -1,1 +1,1 @@
-ldplayer exe с интернетом, zip без
+https://github.com/LucasFaudman/apkscan
